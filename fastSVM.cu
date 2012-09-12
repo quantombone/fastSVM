@@ -21,6 +21,7 @@ static __global__ void FormatImage(const unsigned char *, float3 *, int, bool);
 static __global__ void ComputeHistograms(const float3 *, int, int, int, int, int, int, float *);
 static __global__ void ComputeEnergy(const float *, int, int, float *);
 static __global__ void ComputeFeatures(const float *, const float *, int, int, int, int, float *);
+static __global__ void PadFeatures(const float *, int, int, int, int, cufftReal *);
 
 #define cudaSafeCall(x) _cudaSafeCall((x), __LINE__)
 #define cufftSafeCall(x) _cufftSafeCall((x), __LINE__)
@@ -269,26 +270,58 @@ int main (int argc, char ** argv)
 
         std::cout << "Features: (" << feat_x << ", " << feat_y << ")" << std::endl;
 
+        int pad_x = 1;
+        while (feat_x > pad_x) pad_x <<= 1;
+        int pad_y = 1;
+        while (feat_y > pad_y) pad_y <<= 1;
+
+        std::cout << "Padded features: (" << pad_x << ", " << pad_y << ")" << std::endl;
+        
+        cufftReal * d_feat_pad;
+        cudaSafeCall(cudaMalloc((void**)&d_feat_pad, pad_x*pad_y*feat_bins*sizeof(cufftReal)));
+
+        PadFeatures<<<32, 256>>>(
+            d_feat,
+            feat_x,
+            feat_y,
+            pad_x,
+            pad_y,
+            d_feat_pad);
+        cudaSafeCall(cudaThreadSynchronize());
+        cudaSafeCall(cudaGetLastError());
+        cudaSafeCall(cudaFree(d_feat));
+
+        #if 0
+        std::vector<float> h_feat_pad (pad_x*pad_y*feat_bins);
+        cudaSafeCall(cudaMemcpy(&h_feat_pad[0], d_feat_pad, h_feat_pad.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
+        std::ofstream featPadDump ("feat_pad_dump");
+        std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
+        featPadDump.write((const char *)&h_feat_pad[0], h_feat_pad.size()*sizeof(float));
+        exit(0);
+        #endif
+
         /***** Apply FFT to input image *****/
         cufftHandle planImage;
-        int n[2] = {feat_x, feat_y};
+        int n[2] = {pad_x, pad_y};
         timer.restart();
         std::cout << "FFT on input image features: " << std::flush;
         //cufftSafeCall(cufftPlanMany(&planImage, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_R2C, feat_bins));
-        cufftSafeCall(cufftPlan2d(&planImage, feat_x, feat_y, CUFFT_R2C));
-        std::vector<cufftComplex *> d_feat_freq (feat_bins);
-        for (std::vector<cufftComplex *>::iterator j = d_feat_freq.begin(); j != d_feat_freq.end(); ++j)
+        cufftSafeCall(cufftPlan2d(&planImage, pad_x, pad_y, CUFFT_R2C));
+        cufftComplex * d_feat_freq;
+        cudaSafeCall(cudaMalloc((void**)&d_feat_freq, sizeof(cufftComplex)*pad_x*pad_y*feat_bins));
+        for (int j = 0; j < feat_bins; ++j)
         {
-            cufftComplex * filter;
-            cudaSafeCall(cudaMalloc((void**)&filter, sizeof(cufftComplex)*feat_x*feat_y));
-            *j = filter;
-            cufftSafeCall(cufftExecR2C(planImage, d_feat + feat_x*feat_y*(j-d_feat_freq.begin()), *j));
+            cufftSafeCall(cufftExecR2C(planImage, d_feat_pad + pad_x*pad_y*j, d_feat_freq + pad_x*pad_y*j));
         }
         cudaSafeCall(cudaThreadSynchronize());
         cudaSafeCall(cudaGetLastError());
         cufftSafeCall(cufftDestroy(planImage));
         std::cout << timer.elapsed() << " seconds" << std::endl;
         /**********/
+
+        #if 1
+        exit(0);
+        #endif
 
         /***** FOREACH SVM *****/
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
@@ -319,9 +352,8 @@ int main (int argc, char ** argv)
         }
        
         /***** Free memory for image features and freq transform *****/ 
-        cudaSafeCall(cudaFree(d_feat));
-        for (std::vector<cufftComplex *>::iterator j = d_feat_freq.begin(); j != d_feat_freq.end(); ++j)
-            cudaSafeCall(cudaFree(*j));
+        cudaSafeCall(cudaFree(d_feat_pad));
+        cudaSafeCall(cudaFree(d_feat_freq));
     }
 
     #if 1
@@ -606,5 +638,24 @@ static __global__ void ComputeFeatures(const float * hist, const float * norm, i
         *dst = 0.2357f * t3;
         dst += feat_x*feat_y;
         *dst = 0.2357f * t4;
+    }
+}
+
+static __global__ void PadFeatures(const float * feat, int feat_x, int feat_y, int pad_x, int pad_y, cufftReal * feat_pad)
+{
+    const int numThreads = blockDim.x * gridDim.x;
+    const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
+
+    const int size = pad_x*pad_y*31;
+    for (int i = threadID; i < size; i += numThreads)
+    {
+        int bin = i / (pad_x*pad_y);
+        int rem = i % (pad_x*pad_y);
+        int x = rem / pad_y;
+        int y = rem % pad_y;
+
+        int j = bin*feat_x*feat_y + x*feat_y + y;
+        if (x >= feat_x || y >= feat_y) feat_pad[i] = 0.f;
+        else feat_pad[i] = feat[j];
     }
 }
