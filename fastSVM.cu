@@ -292,11 +292,11 @@ int main (int argc, char ** argv)
         cudaSafeCall(cudaFree(d_feat));
 
         #if 0
-        std::vector<float> h_feat_pad (pad_x*pad_y*feat_bins);
+        std::vector<cufftReal> h_feat_pad (pad_x*pad_y*feat_bins);
         cudaSafeCall(cudaMemcpy(&h_feat_pad[0], d_feat_pad, h_feat_pad.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
         std::ofstream featPadDump ("feat_pad_dump");
         std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
-        featPadDump.write((const char *)&h_feat_pad[0], h_feat_pad.size()*sizeof(float));
+        featPadDump.write((const char *)&h_feat_pad[0], h_feat_pad.size()*sizeof(cufftReal));
         exit(0);
         #endif
 
@@ -308,15 +308,25 @@ int main (int argc, char ** argv)
         //cufftSafeCall(cufftPlanMany(&planImage, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_R2C, feat_bins));
         cufftSafeCall(cufftPlan2d(&planImage, pad_x, pad_y, CUFFT_R2C));
         cufftComplex * d_feat_freq;
-        cudaSafeCall(cudaMalloc((void**)&d_feat_freq, sizeof(cufftComplex)*pad_x*pad_y*feat_bins));
+        // Note: for R2C CUFFT only stores non-redundant complex coefficients
+        cudaSafeCall(cudaMalloc((void**)&d_feat_freq, sizeof(cufftComplex)*pad_x*(pad_y/2+1)*feat_bins));
         for (int j = 0; j < feat_bins; ++j)
         {
-            cufftSafeCall(cufftExecR2C(planImage, d_feat_pad + pad_x*pad_y*j, d_feat_freq + pad_x*pad_y*j));
+            cufftSafeCall(cufftExecR2C(planImage, d_feat_pad + pad_x*pad_y*j, d_feat_freq + pad_x*(pad_y/2+1)*j));
+            cudaSafeCall(cudaThreadSynchronize());
+            cudaSafeCall(cudaGetLastError());
         }
-        cudaSafeCall(cudaThreadSynchronize());
-        cudaSafeCall(cudaGetLastError());
         cufftSafeCall(cufftDestroy(planImage));
         std::cout << timer.elapsed() << " seconds" << std::endl;
+
+        #if 1
+        std::vector<cufftComplex> h_feat_freq (pad_x*(pad_y/2+1)*feat_bins);
+        cudaSafeCall(cudaMemcpy(&h_feat_freq[0], d_feat_freq, h_feat_freq.size()*sizeof(cufftComplex), cudaMemcpyDeviceToHost));
+        std::ofstream featFreqDump ("feat_freq_dump");
+        std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
+        featFreqDump.write((const char *)&h_feat_freq[0], h_feat_freq.size()*sizeof(cufftComplex));
+        exit(0);
+        #endif
         /**********/
 
         #if 1
