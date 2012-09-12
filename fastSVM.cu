@@ -14,7 +14,7 @@
 #include <boost/timer.hpp>
 
 static __global__ void PointwiseMul(cufftComplex*, const cufftComplex*, int);
-static __global__ void Add(cufftComplex*, const cufftComplex, int);
+static __global__ void Add(cufftReal*, const cufftReal, int);
 static __global__ void Zero(int, float *);
 
 static __global__ void FormatImage(const unsigned char *, float3 *, int, bool);
@@ -301,25 +301,26 @@ int main (int argc, char ** argv)
         #endif
 
         /***** Apply FFT to input image *****/
-        cufftHandle planImage;
-        int n[2] = {pad_x, pad_y};
+        cufftHandle planForward, planInverse;
+        //int n[2] = {pad_x, pad_y};
         timer.restart();
         std::cout << "FFT on input image features: " << std::flush;
         //cufftSafeCall(cufftPlanMany(&planImage, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_R2C, feat_bins));
-        cufftSafeCall(cufftPlan2d(&planImage, pad_x, pad_y, CUFFT_R2C));
+        cufftSafeCall(cufftPlan2d(&planForward, pad_x, pad_y, CUFFT_R2C));
+        cufftSafeCall(cufftPlan2d(&planInverse, pad_x, pad_y, CUFFT_C2R));
         cufftComplex * d_feat_freq;
         // Note: for R2C CUFFT only stores non-redundant complex coefficients
         cudaSafeCall(cudaMalloc((void**)&d_feat_freq, sizeof(cufftComplex)*pad_x*(pad_y/2+1)*feat_bins));
         for (int j = 0; j < feat_bins; ++j)
         {
-            cufftSafeCall(cufftExecR2C(planImage, d_feat_pad + pad_x*pad_y*j, d_feat_freq + pad_x*(pad_y/2+1)*j));
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
+            cufftSafeCall(cufftExecR2C(planForward, d_feat_pad + pad_x*pad_y*j, d_feat_freq + pad_x*(pad_y/2+1)*j));
         }
-        cufftSafeCall(cufftDestroy(planImage));
+        cudaSafeCall(cudaThreadSynchronize());
+        cudaSafeCall(cudaGetLastError());
+        cudaSafeCall(cudaFree(d_feat_pad));
         std::cout << timer.elapsed() << " seconds" << std::endl;
 
-        #if 1
+        #if 0
         std::vector<cufftComplex> h_feat_freq (pad_x*(pad_y/2+1)*feat_bins);
         cudaSafeCall(cudaMemcpy(&h_feat_freq[0], d_feat_freq, h_feat_freq.size()*sizeof(cufftComplex), cudaMemcpyDeviceToHost));
         std::ofstream featFreqDump ("feat_freq_dump");
@@ -329,11 +330,16 @@ int main (int argc, char ** argv)
         #endif
         /**********/
 
-        #if 1
-        exit(0);
-        #endif
-
         /***** FOREACH SVM *****/
+        cufftComplex * d_filter_freq;
+        cudaSafeCall(cudaMalloc((void**)&d_filter_freq, sizeof(cufftComplex)*pad_x*(pad_y/2+1)*feat_bins));
+
+        cufftReal * d_filter_padded;
+        cudaSafeCall(cudaMalloc((void**)&d_filter_padded, sizeof(cufftReal)*feat_bins*pad_x*pad_y));
+
+        float * d_filter;
+        cudaSafeCall(cudaMalloc((void**)&d_filter, sizeof(float)*pad_x*pad_y*feat_bins));
+
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
         {
             // Image too small for filter
@@ -341,84 +347,80 @@ int main (int argc, char ** argv)
             {
                 continue;
             }
-            std::cout << j - svms.begin() << std::endl;
-            float * d_filter, * d_filter_padded;
-            cudaSafeCall(cudaMalloc((void**)&d_filter, sizeof(float)*j->w.size()));
+        //    std::cout << j - svms.begin() << std::endl;
             cudaSafeCall(cudaMemcpy(d_filter, &j->w[0], sizeof(float)*j->w.size(), cudaMemcpyHostToDevice));
-            cudaSafeCall(cudaMalloc((void**)&d_filter_padded, sizeof(float)*feat_bins*feat_x*feat_y));
 
-/*
-            PadFilter<<<32, 256>>>(
+            PadFeatures<<<32, 256>>>(
                 d_filter,
                 j->width,
                 j->height,
-                feat_x,
-                feat_y,
-                feat_bins,
+                pad_x,
+                pad_y,
                 d_filter_padded);
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
+
+            #if 0
+            std::vector<cufftReal> h_filter_pad (pad_x*pad_y*feat_bins);
+            cudaSafeCall(cudaMemcpy(&h_filter_pad[0], d_filter_padded, h_filter_pad.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
+            std::ofstream filterPadDump ("filter_pad_dump");
+            std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
+            filterPadDump.write((const char *)&h_filter_pad[0], h_filter_pad.size()*sizeof(cufftReal));
+            exit(0);
+            #endif
+           
+            for (int k = 0; k < feat_bins; ++k) 
+                cufftSafeCall(cufftExecR2C(planForward, d_filter_padded + pad_x*pad_y*k, d_filter_freq + pad_x*(pad_y/2+1)*k));
+            cudaSafeCall(cudaThreadSynchronize());
+            cudaSafeCall(cudaGetLastError());
+
+            #if 1
+            std::vector<cufftComplex> h_filter_freq (pad_x*(pad_y/2+1)*feat_bins);
+            cudaSafeCall(cudaMemcpy(&h_filter_freq[0], d_filter_freq, h_filter_freq.size()*sizeof(cufftComplex), cudaMemcpyDeviceToHost));
+            std::ofstream filterFreqDump ("filter_freq_dump");
+            std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
+            filterFreqDump.write((const char *)&h_filter_freq[0], h_filter_freq.size()*sizeof(cufftComplex));
+            exit(0);
+            #endif
+ 
+/*
+            PointwiseMul<<<32, 256>>>(
+                d_filter_freq, 
+                d_feat_freq, 
+                pad_x*(pad_y/2+1)*feat_bins);
+            cudaSafeCall(cudaThreadSynchronize());
+            cudaSafeCall(cudaGetLastError());
 */
+            for (int k = 0; k < feat_bins; ++k)
+                cufftSafeCall(cufftExecC2R(planInverse, d_filter_freq + pad_x*(pad_y/2+1)*k, d_filter_padded + pad_x*pad_y*k));
+            cudaSafeCall(cudaThreadSynchronize());
+            cudaSafeCall(cudaGetLastError());
+
+            #if 1
+            std::vector<cufftReal> h_conv (pad_x*pad_y*feat_bins);
+            cudaSafeCall(cudaMemcpy(&h_conv[0], d_filter_padded, h_conv.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
+            std::ofstream convDump ("conv_dump");
+            std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
+            convDump.write((const char *)&h_conv[0], h_conv.size()*sizeof(cufftReal));
+            exit(0);
+            #endif
+
+            Add<<<32, 256>>>(
+                d_filter_padded, 
+                j->b, 
+                pad_x*pad_y*feat_bins);
+
+ 
         }
-       
         /***** Free memory for image features and freq transform *****/ 
-        cudaSafeCall(cudaFree(d_feat_pad));
+        cudaSafeCall(cudaFree(d_filter));
+        cudaSafeCall(cudaFree(d_filter_padded));
+        cudaSafeCall(cudaFree(d_filter_freq));
+        cufftSafeCall(cufftDestroy(planForward));
+        cufftSafeCall(cufftDestroy(planInverse));
         cudaSafeCall(cudaFree(d_feat_freq));
     }
 
-    #if 1
-    exit(0);
-    #endif
-
-    int NX = 128;
-    int NY = 128;
-    
-    cufftHandle plan;
-    cufftComplex *h_image, *d_image;
-    cufftComplex *h_svm, *d_svm;
-    cufftComplex *d_image_f, *d_svm_f;
-    cufftComplex bias;
-    bias.x = 0.f;
-    bias.y = 0.f;
-
-    h_image = (cufftComplex*)malloc(sizeof(cufftComplex)*NX*NY);
-    h_svm = (cufftComplex*)malloc(sizeof(cufftComplex)*NX*NY);
-
-    cudaSafeCall(cudaMalloc((void**)&d_image, sizeof(cufftComplex)*NX*NY));
-    cudaSafeCall(cudaMalloc((void**)&d_image_f, sizeof(cufftComplex)*NX*NY));
-    cudaSafeCall(cudaMalloc((void**)&d_svm, sizeof(cufftComplex)*NX*NY));
-    cudaSafeCall(cudaMalloc((void**)&d_svm_f, sizeof(cufftComplex)*NX*NY));
-
-    cudaSafeCall(cudaMemcpy(d_image, h_image, sizeof(cufftComplex)*NX*NY, cudaMemcpyHostToDevice));
-    cudaSafeCall(cudaMemcpy(d_svm, h_svm, sizeof(cufftComplex)*NX*NY, cudaMemcpyHostToDevice));
-
-    cufftSafeCall(cufftPlan2d(&plan, NX, NY, CUFFT_C2C));
-
-    for (int i = 0; i < 9360*31; ++i)
-    {
-    cufftSafeCall(cufftExecC2C(plan, d_image, d_image_f, CUFFT_FORWARD));
-    cufftSafeCall(cufftExecC2C(plan, d_svm, d_svm_f, CUFFT_FORWARD));
-
-    PointwiseMul<<<32, 256>>>(d_svm_f, d_image_f, NX*NY);
-    cudaSafeCall(cudaGetLastError());
-
-    cufftSafeCall(cufftExecC2C(plan, d_svm_f, d_svm, CUFFT_INVERSE));
-
-    Add<<<32, 256>>>(d_svm, bias, NX*NY);
-    cudaSafeCall(cudaGetLastError());
-    }
-    printf("%f seconds\n", timer.elapsed());
-
-    cudaSafeCall(cudaMemcpy(h_svm, d_svm, sizeof(cufftComplex)*NX*NY, cudaMemcpyDeviceToHost));
-
-    cufftSafeCall(cufftDestroy(plan));
-    cudaSafeCall(cudaFree(d_image));
-    cudaSafeCall(cudaFree(d_image_f));
-    cudaSafeCall(cudaFree(d_svm));
-    cudaSafeCall(cudaFree(d_svm_f));
-
-    free(h_image);
-    free(h_svm);
 
     return 0;
 }
@@ -438,14 +440,13 @@ static __global__ void PointwiseMul(cufftComplex* a, const cufftComplex* b, int 
     }
 }
 
-static __global__ void Add(cufftComplex* a, const cufftComplex b, int size)
+static __global__ void Add(cufftReal* a, const cufftReal b, int size)
 {
     const int numThreads = blockDim.x * gridDim.x;
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
     for (int i = threadID; i < size; i += numThreads)
     {
-        a[i].x += b.x;     
-        a[i].y += b.y;
+        a[i] += b;     
     }
 }
 
