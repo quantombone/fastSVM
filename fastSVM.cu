@@ -423,8 +423,12 @@ int main (int argc, char ** argv)
             filterFreqDump.write((const char *)&h_filter_freq[0], h_filter_freq.size()*sizeof(cufftComplex));
             exit(0);
             #endif
- 
-            PointwiseMulConj<<<32, 256>>>(
+
+            int pointwise_block;
+            pointwise_block = 512; 
+            int pointwise_grid;
+            pointwise_grid = ceil((float)(pad_x*(pad_y/2+1)*feat_bins)/pointwise_block);
+            PointwiseMulConj<<<pointwise_grid, pointwise_block>>>(
                 d_filter_freq, 
                 d_feat_freq, 
                 pad_x*(pad_y/2+1)*feat_bins);
@@ -509,17 +513,15 @@ std::cout << "@" << std::endl;
 
 static __global__ void PointwiseMulConj(cufftComplex* a, const cufftComplex* b, int size)
 {
-    const int numThreads = blockDim.x * gridDim.x;
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int i = threadID; i < size; i += numThreads)
-    {
-        cufftComplex c;
-        const cufftComplex * a_local = a + i;
-        const cufftComplex * b_local = b + i;
-        c.x = a_local->x * b_local->x + a_local->y * b_local->y;
-        c.y = a_local->x * b_local->y - a_local->y * b_local->x;
-        a[i] = c;
-    }
+    if (threadID >= size) return;
+        
+    cufftComplex c;
+    const cufftComplex * a_local = a + threadID;
+    const cufftComplex * b_local = b + threadID;
+    c.x = a_local->x * b_local->x + a_local->y * b_local->y;
+    c.y = a_local->x * b_local->y - a_local->y * b_local->x;
+    a[threadID] = c;
 }
 
 static __global__ void CropScaleAccum(const cufftReal* a, int crop_x, int crop_y, int pad_x, int pad_y, cufftReal * accum) 
