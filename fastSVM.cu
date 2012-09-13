@@ -471,9 +471,9 @@ int main (int argc, char ** argv)
 
             // Result of IFFT in CUFFT needs to be divided by M*N
             dim3 accum_block;
-            accum_block.x = 8;
-            accum_block.y = 8;
-            accum_block.z = 8;
+            accum_block.x = 4;
+            accum_block.y = 4;
+            accum_block.z = 32;
             dim3 accum_grid;
             accum_grid.x = ceil((float)crop_x/accum_block.x);
             accum_grid.y = ceil((float)crop_y/accum_block.y);
