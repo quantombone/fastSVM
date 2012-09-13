@@ -296,7 +296,15 @@ int main (int argc, char ** argv)
         cufftReal * d_feat_pad;
         cudaSafeCall(cudaMalloc((void**)&d_feat_pad, pad_x*pad_y*feat_bins*sizeof(cufftReal)));
 
-        PadFeatures<<<32, 256>>>(
+        dim3 pad_block;
+        pad_block.x = 8;
+        pad_block.y = 8;
+        pad_block.z = 8;
+        dim3 pad_grid;
+        pad_grid.x = ceil((float)pad_x/pad_block.x);
+        pad_grid.y = ceil((float)pad_y/pad_block.y);
+        pad_grid.z = ceil((float)feat_bins/pad_block.z);
+        PadFeatures<<<pad_grid, pad_block>>>(
             d_feat,
             feat_x,
             feat_y,
@@ -369,7 +377,7 @@ int main (int argc, char ** argv)
         //    std::cout << j - svms.begin() << std::endl;
             cudaSafeCall(cudaMemcpy(d_filter, &j->w[0], sizeof(float)*j->w.size(), cudaMemcpyHostToDevice));
 
-            PadFeatures<<<32, 256>>>(
+            PadFeatures<<<pad_grid, pad_block>>>(
                 d_filter,
                 j->width,
                 j->height,
@@ -753,19 +761,19 @@ static __global__ void ComputeFeatures(const float * hist, const float * norm, i
 
 static __global__ void PadFeatures(const float * feat, int feat_x, int feat_y, int pad_x, int pad_y, cufftReal * feat_pad)
 {
-    const int numThreads = blockDim.x * gridDim.x;
-    const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
+    const int threadID_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int threadID_y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int threadID_z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    const int size = pad_x*pad_y*31;
-    for (int i = threadID; i < size; i += numThreads)
-    {
-        int bin = i / (pad_x*pad_y);
-        int rem = i % (pad_x*pad_y);
-        int x = rem / pad_y;
-        int y = rem % pad_y;
+    int x = threadID_x;
+    int y = threadID_y;
+    int bin = threadID_z;
 
-        int j = bin*feat_x*feat_y + x*feat_y + y;
-        if (x >= feat_x || y >= feat_y) feat_pad[i] = 0.f;
-        else feat_pad[i] = feat[j];
-    }
+    if (x >= pad_x || y >= pad_y || bin >= 31) return;
+
+    int i = bin*pad_x*pad_y + x*pad_y + y;
+    int j = bin*feat_x*feat_y + x*feat_y + y;
+
+    if (x >= feat_x || y >= feat_y) feat_pad[i] = 0.f;
+    else feat_pad[i] = feat[j];
 }
