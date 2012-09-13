@@ -297,9 +297,9 @@ int main (int argc, char ** argv)
         cudaSafeCall(cudaMalloc((void**)&d_feat_pad, pad_x*pad_y*feat_bins*sizeof(cufftReal)));
 
         dim3 pad_block;
-        pad_block.x = 8;
-        pad_block.y = 8;
-        pad_block.z = 8;
+        pad_block.x = 16;
+        pad_block.y = 16;
+        pad_block.z = 1;
         dim3 pad_grid;
         pad_grid.x = ceil((float)pad_x/pad_block.x);
         pad_grid.y = ceil((float)pad_y/pad_block.y);
@@ -771,11 +771,8 @@ static __global__ void PadFeatures(const float * feat, int feat_x, int feat_y, i
     int y = threadID_y;
     int bin = threadID_z;
 
-    if (x >= pad_x || y >= pad_y || bin >= 31) return;
-
     int i = bin*pad_x*pad_y + x*pad_y + y;
     int j = bin*feat_x*feat_y + x*feat_y + y;
 
-    if (x >= feat_x || y >= feat_y) feat_pad[i] = 0.f;
-    else feat_pad[i] = feat[j];
+    feat_pad[i] = (x >= feat_x || y >= feat_y) ? 0.f : feat[j];
 }
