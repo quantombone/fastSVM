@@ -365,7 +365,7 @@ int main (int argc, char ** argv)
         cudaSafeCall(cudaMalloc((void**)&d_filter, sizeof(float)*pad_x*pad_y*feat_bins));
 
         cufftReal * d_result;
-        cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y*feat_bins));
+        cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y));
 
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
         {
@@ -395,10 +395,17 @@ int main (int argc, char ** argv)
             filterPadDump.write((const char *)&h_filter_pad[0], h_filter_pad.size()*sizeof(cufftReal));
             exit(0);
             #endif
- 
-            Init<<<32, 256>>>(
+
+            int crop_x = feat_x - j->width + 1;
+            int crop_y = feat_y - j->height + 1;
+
+            int init_block;
+            init_block = 512;
+            int init_grid;
+            init_grid = ceil((float)crop_x*crop_y/init_block);
+            Init<<<init_grid, init_block>>>(
                 -j->b,
-                pad_x*pad_y*feat_bins,
+                crop_x*crop_y,
                 d_result);
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
@@ -448,8 +455,6 @@ int main (int argc, char ** argv)
             #endif
 
             // Result of IFFT in CUFFT needs to be divided by M*N
-            int crop_x = feat_x - j->width + 1;
-            int crop_y = feat_y - j->height + 1;
             for (int k = 0; k < feat_bins; ++k)
             {
                 CropScaleAccum<<<32, 256>>>(
@@ -548,12 +553,9 @@ static __global__ void Zero(int size, float * buf)
 
 static __global__ void Init(float value, int size, float * buf)
 {
-    const int numThreads = blockDim.x * gridDim.x;
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
-    for (int i = threadID; i < size; i += numThreads)
-    {
-        buf[i] = value;
-    }
+    if(threadID >= size) return;
+    buf[threadID] = value;
 }
 
 static __global__ void FormatImage(const unsigned char * byte_image, float3 * color_float_image, int width, int height, int line, bool grayscale)
