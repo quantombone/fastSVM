@@ -479,7 +479,8 @@ int main (int argc, char ** argv)
             resultDump.write((const char *)&h_result[0], h_result.size()*sizeof(cufftReal));
             exit(0);
             #endif
-        
+       
+            #if 0 
             out.write((const char*)&scaler, sizeof(float));
             uint16_t crop_x_out = crop_x;
             uint16_t crop_y_out = crop_y;
@@ -488,7 +489,8 @@ int main (int argc, char ** argv)
             std::vector<cufftReal> h_result (crop_x*crop_y);
             cudaSafeCall(cudaMemcpy(&h_result[0], d_result, h_result.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
             out.write((const char*)&h_result[0], h_result.size()*sizeof(cufftReal));
-std::cout << "@" << std::endl;
+            #endif
+
             #if 1
             break;
             #endif
@@ -515,12 +517,10 @@ static __global__ void PointwiseMulConj(cufftComplex* a, const cufftComplex* b, 
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
     if (threadID >= size) return;
         
-    cufftComplex c;
-    const cufftComplex * a_local = a + threadID;
-    const cufftComplex * b_local = b + threadID;
-    c.x = a_local->x * b_local->x + a_local->y * b_local->y;
-    c.y = a_local->x * b_local->y - a_local->y * b_local->x;
-    a[threadID] = c;
+    cufftComplex a_local = a[threadID];
+    cufftComplex b_local = b[threadID];
+    a[threadID].x = a_local.x * b_local.x + a_local.y * b_local.y;
+    a[threadID].y = a_local.x * b_local.y - a_local.y * b_local.x;
 }
 
 static __global__ void CropScaleAccum(const cufftReal* a, int crop_x, int crop_y, int pad_x, int pad_y, cufftReal * accum) 
