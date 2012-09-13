@@ -13,9 +13,10 @@
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/timer.hpp>
 
-static __global__ void PointwiseMul(cufftComplex*, const cufftComplex*, int);
-static __global__ void Add(cufftReal*, const cufftReal, int);
+static __global__ void PointwiseMulConj(cufftComplex*, const cufftComplex*, int);
+static __global__ void ShiftScaleAccum(const cufftReal*, int, int, int, int, cufftReal*);
 static __global__ void Zero(int, float *);
+static __global__ void Init(float, int, float *);
 
 static __global__ void FormatImage(const unsigned char *, float3 *, int, bool);
 static __global__ void ComputeHistograms(const float3 *, int, int, int, int, int, int, float *);
@@ -272,8 +273,10 @@ int main (int argc, char ** argv)
 
         int pad_x = 1;
         while (feat_x > pad_x) pad_x <<= 1;
+        pad_x <<= 1;
         int pad_y = 1;
         while (feat_y > pad_y) pad_y <<= 1;
+        pad_y <<= 1;
 
         std::cout << "Padded features: (" << pad_x << ", " << pad_y << ")" << std::endl;
         
@@ -340,6 +343,9 @@ int main (int argc, char ** argv)
         float * d_filter;
         cudaSafeCall(cudaMalloc((void**)&d_filter, sizeof(float)*pad_x*pad_y*feat_bins));
 
+        cufftReal * d_result;
+        cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y*feat_bins));
+
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
         {
             // Image too small for filter
@@ -368,13 +374,20 @@ int main (int argc, char ** argv)
             filterPadDump.write((const char *)&h_filter_pad[0], h_filter_pad.size()*sizeof(cufftReal));
             exit(0);
             #endif
-           
+ 
+            Init<<<32, 256>>>(
+                j->b,
+                pad_x*pad_y*feat_bins,
+                d_result);
+            cudaSafeCall(cudaThreadSynchronize());
+            cudaSafeCall(cudaGetLastError());
+          
             for (int k = 0; k < feat_bins; ++k) 
                 cufftSafeCall(cufftExecR2C(planForward, d_filter_padded + pad_x*pad_y*k, d_filter_freq + pad_x*(pad_y/2+1)*k));
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
 
-            #if 1
+            #if 0
             std::vector<cufftComplex> h_filter_freq (pad_x*(pad_y/2+1)*feat_bins);
             cudaSafeCall(cudaMemcpy(&h_filter_freq[0], d_filter_freq, h_filter_freq.size()*sizeof(cufftComplex), cudaMemcpyDeviceToHost));
             std::ofstream filterFreqDump ("filter_freq_dump");
@@ -383,20 +396,19 @@ int main (int argc, char ** argv)
             exit(0);
             #endif
  
-/*
-            PointwiseMul<<<32, 256>>>(
+            PointwiseMulConj<<<32, 256>>>(
                 d_filter_freq, 
                 d_feat_freq, 
                 pad_x*(pad_y/2+1)*feat_bins);
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
-*/
+
             for (int k = 0; k < feat_bins; ++k)
                 cufftSafeCall(cufftExecC2R(planInverse, d_filter_freq + pad_x*(pad_y/2+1)*k, d_filter_padded + pad_x*pad_y*k));
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
 
-            #if 1
+            #if 0
             std::vector<cufftReal> h_conv (pad_x*pad_y*feat_bins);
             cudaSafeCall(cudaMemcpy(&h_conv[0], d_filter_padded, h_conv.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
             std::ofstream convDump ("conv_dump");
@@ -405,12 +417,30 @@ int main (int argc, char ** argv)
             exit(0);
             #endif
 
-            Add<<<32, 256>>>(
-                d_filter_padded, 
-                j->b, 
-                pad_x*pad_y*feat_bins);
+            // Result of IFFT in CUFFT needs to be divided by M*N
+            for (int k = 0; k < feat_bins; ++k)
+            {
+                ShiftScaleAccum<<<32, 256>>>(
+                    d_filter_padded + pad_x*pad_y*k,
+                    0,//j->width,
+                    0,//j->height,
+                    pad_x,
+                    pad_y,
+                    d_result);
+                cudaSafeCall(cudaThreadSynchronize());
+                cudaSafeCall(cudaGetLastError());
+            }
+    
+            #if 1
+            std::vector<cufftReal> h_result (pad_x*pad_y*feat_bins);
+            cudaSafeCall(cudaMemcpy(&h_result[0], d_result, h_result.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
+            std::ofstream resultDump ("result_dump");
+            std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
+            resultDump.write((const char *)&h_result[0], h_result.size()*sizeof(cufftReal));
+            exit(0);
+            #endif
 
- 
+
         }
         /***** Free memory for image features and freq transform *****/ 
         cudaSafeCall(cudaFree(d_filter));
@@ -425,7 +455,7 @@ int main (int argc, char ** argv)
     return 0;
 }
 
-static __global__ void PointwiseMul(cufftComplex* a, const cufftComplex* b, int size)
+static __global__ void PointwiseMulConj(cufftComplex* a, const cufftComplex* b, int size)
 {
     const int numThreads = blockDim.x * gridDim.x;
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
@@ -434,19 +464,27 @@ static __global__ void PointwiseMul(cufftComplex* a, const cufftComplex* b, int 
         cufftComplex c;
         const cufftComplex * a_local = a + i;
         const cufftComplex * b_local = b + i;
-        c.x = a_local->x * b_local->x - a_local->y * b_local->y;
-        c.y = a_local->x * b_local->y + a_local->y * b_local->x;
+        c.x = a_local->x * b_local->x + a_local->y * b_local->y;
+        c.y = a_local->x * b_local->y - a_local->y * b_local->x;
         a[i] = c;
     }
 }
 
-static __global__ void Add(cufftReal* a, const cufftReal b, int size)
+static __global__ void ShiftScaleAccum(const cufftReal* a, int filt_x, int filt_y, int pad_x, int pad_y, cufftReal * accum) 
 {
     const int numThreads = blockDim.x * gridDim.x;
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int size = pad_x*pad_y;
     for (int i = threadID; i < size; i += numThreads)
     {
-        a[i] += b;     
+        int row = i % pad_y;
+        int col = i / pad_y;
+        int newRow = (row + filt_y)%pad_y;
+        int newCol = (col + filt_x)%pad_x;
+        int j = newCol*pad_y + newRow;
+        
+        accum[j] += a[i]/(pad_x*pad_y);
     }
 }
 
@@ -457,6 +495,16 @@ static __global__ void Zero(int size, float * buf)
     for (int i = threadID; i < size; i += numThreads)
     {
         buf[i] = 0.f;
+    }
+}
+
+static __global__ void Init(float value, int size, float * buf)
+{
+    const int numThreads = blockDim.x * gridDim.x;
+    const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
+    for (int i = threadID; i < size; i += numThreads)
+    {
+        buf[i] = value;
     }
 }
 
