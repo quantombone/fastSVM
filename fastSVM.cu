@@ -14,7 +14,7 @@
 #include <boost/timer.hpp>
 
 static __global__ void PointwiseMulConj(cufftComplex*, const cufftComplex*, int);
-static __global__ void ShiftScaleAccum(const cufftReal*, int, int, int, int, cufftReal*);
+static __global__ void CropScaleAccum(const cufftReal*, int, int, int, int, cufftReal*);
 static __global__ void Zero(int, float *);
 static __global__ void Init(float, int, float *);
 
@@ -418,12 +418,14 @@ int main (int argc, char ** argv)
             #endif
 
             // Result of IFFT in CUFFT needs to be divided by M*N
+            int crop_x = feat_x - j->width + 1;
+            int crop_y = feat_y - j->height + 1;
             for (int k = 0; k < feat_bins; ++k)
             {
-                ShiftScaleAccum<<<32, 256>>>(
+                CropScaleAccum<<<32, 256>>>(
                     d_filter_padded + pad_x*pad_y*k,
-                    0,//j->width,
-                    0,//j->height,
+                    crop_x,
+                    crop_y,
                     pad_x,
                     pad_y,
                     d_result);
@@ -432,10 +434,10 @@ int main (int argc, char ** argv)
             }
     
             #if 1
-            std::vector<cufftReal> h_result (pad_x*pad_y*feat_bins);
+            std::vector<cufftReal> h_result (crop_x*crop_y);
             cudaSafeCall(cudaMemcpy(&h_result[0], d_result, h_result.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
             std::ofstream resultDump ("result_dump");
-            std::cout << pad_x << " " << pad_y << " " << feat_bins << std::endl;
+            std::cout << crop_x << " " << crop_y << std::endl;
             resultDump.write((const char *)&h_result[0], h_result.size()*sizeof(cufftReal));
             exit(0);
             #endif
@@ -470,7 +472,7 @@ static __global__ void PointwiseMulConj(cufftComplex* a, const cufftComplex* b, 
     }
 }
 
-static __global__ void ShiftScaleAccum(const cufftReal* a, int filt_x, int filt_y, int pad_x, int pad_y, cufftReal * accum) 
+static __global__ void CropScaleAccum(const cufftReal* a, int crop_x, int crop_y, int pad_x, int pad_y, cufftReal * accum) 
 {
     const int numThreads = blockDim.x * gridDim.x;
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
@@ -480,9 +482,10 @@ static __global__ void ShiftScaleAccum(const cufftReal* a, int filt_x, int filt_
     {
         int row = i % pad_y;
         int col = i / pad_y;
-        int newRow = (row + filt_y)%pad_y;
-        int newCol = (col + filt_x)%pad_x;
-        int j = newCol*pad_y + newRow;
+
+        if (row >= crop_y || col >= crop_x) return;
+
+        int j = col*crop_y + row;
         
         accum[j] += a[i]/(pad_x*pad_y);
     }
