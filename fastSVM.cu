@@ -459,18 +459,23 @@ int main (int argc, char ** argv)
             #endif
 
             // Result of IFFT in CUFFT needs to be divided by M*N
-            for (int k = 0; k < feat_bins; ++k)
-            {
-                CropScaleAccum<<<32, 256>>>(
-                    d_filter_padded + pad_x*pad_y*k,
-                    crop_x,
-                    crop_y,
-                    pad_x,
-                    pad_y,
-                    d_result);
-                cudaSafeCall(cudaThreadSynchronize());
-                cudaSafeCall(cudaGetLastError());
-            }
+            dim3 accum_block;
+            accum_block.x = 8;
+            accum_block.y = 8;
+            accum_block.z = 8;
+            dim3 accum_grid;
+            accum_grid.x = ceil((float)crop_x/accum_block.x);
+            accum_grid.y = ceil((float)crop_y/accum_block.y);
+            accum_grid.z = ceil((float)feat_bins/accum_block.z);
+            CropScaleAccum<<<accum_grid, accum_block>>>(
+                d_filter_padded,
+                crop_x,
+                crop_y,
+                pad_x,
+                pad_y,
+                d_result);
+            cudaSafeCall(cudaThreadSynchronize());
+            cudaSafeCall(cudaGetLastError());
     
             #if 0
             std::vector<cufftReal> h_result (crop_x*crop_y);
@@ -526,21 +531,20 @@ static __global__ void PointwiseMulConj(cufftComplex* a, const cufftComplex* b, 
 
 static __global__ void CropScaleAccum(const cufftReal* a, int crop_x, int crop_y, int pad_x, int pad_y, cufftReal * accum) 
 {
-    const int numThreads = blockDim.x * gridDim.x;
-    const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
+    const int threadID_x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int threadID_y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int threadID_z = blockIdx.z * blockDim.z + threadIdx.z;
 
-    int size = pad_x*pad_y;
-    for (int i = threadID; i < size; i += numThreads)
-    {
-        int row = i % pad_y;
-        int col = i / pad_y;
+    int y = threadID_y;
+    int x = threadID_x;
+    int bin = threadID_z;
 
-        if (row >= crop_y || col >= crop_x) continue;
+    if (y >= crop_y || x >= crop_x || bin >= 31) return;
 
-        int j = col*crop_y + row;
+    int i = bin*pad_x*pad_y + x*pad_y + y;
+    int j = x*crop_y + y;
         
-        accum[j] += a[i]/(pad_x*pad_y);
-    }
+    atomicAdd(accum + j, a[i]/(pad_x*pad_y));
 }
 
 static __global__ void Zero(int size, float * buf)
