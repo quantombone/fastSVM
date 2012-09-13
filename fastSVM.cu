@@ -113,6 +113,8 @@ int main (int argc, char ** argv)
     std::istream incoming(&in);
     std::vector<SVM> svms;
     int total_coeff = 0;
+    uint16_t largest_filter_width = 0;
+    uint16_t largest_filter_height = 0;
     while (true)
     {
         SVM svm;
@@ -123,6 +125,8 @@ int main (int argc, char ** argv)
         incoming.read((char*)&svm.bins, sizeof(uint16_t));
         assert(incoming);
         assert(svm.bins == 31);
+        largest_filter_width = std::max(largest_filter_width, svm.width);
+        largest_filter_height = std::max(largest_filter_height, svm.height);
         
         svm.w.resize(svm.width*svm.height*svm.bins);
         total_coeff += svm.w.size();
@@ -309,11 +313,9 @@ int main (int argc, char ** argv)
         std::cout << "Features: (" << feat_x << ", " << feat_y << ")" << std::endl;
 
         int pad_x = 1;
-        while (feat_x > pad_x) pad_x <<= 1;
-        pad_x <<= 1;
+        while (feat_x+largest_filter_width > pad_x) pad_x <<= 1;
         int pad_y = 1;
-        while (feat_y > pad_y) pad_y <<= 1;
-        pad_y <<= 1;
+        while (feat_y+largest_filter_height > pad_y) pad_y <<= 1;
 
         std::cout << "Padded features: (" << pad_x << ", " << pad_y << ")" << std::endl;
         
@@ -383,6 +385,8 @@ int main (int argc, char ** argv)
 
         cufftReal * d_result;
         cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y));
+
+        std::vector<cufftReal> h_result (feat_x*feat_y);
 
         float * d_filter = d_filter_big;
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
@@ -491,17 +495,14 @@ int main (int argc, char ** argv)
             exit(0);
             #endif
        
+            cudaSafeCall(cudaMemcpy(&h_result[0], d_result, crop_x*crop_y*sizeof(cufftReal), cudaMemcpyDeviceToHost));
+
             #if 1
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
- 
             out.write((const char*)&scaler, sizeof(float));
             uint16_t crop_x_out = crop_x;
             uint16_t crop_y_out = crop_y;
             out.write((const char*)&crop_y_out, sizeof(uint16_t));
             out.write((const char*)&crop_x_out, sizeof(uint16_t));
-            std::vector<cufftReal> h_result (crop_x*crop_y);
-            cudaSafeCall(cudaMemcpy(&h_result[0], d_result, h_result.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
             out.write((const char*)&h_result[0], h_result.size()*sizeof(cufftReal));
             #endif
 
