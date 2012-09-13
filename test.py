@@ -33,7 +33,8 @@ def tester(prefix):
     output = '%s.gz'%prefix
     correct = '%s-correct.gz'%prefix
 
-    os.remove(output)
+    try: os.remove(output)
+    except: pass
     subprocess.check_call(['./fastSVM', image, 'packaged.gz', output])
 
     outputResults = readResults(output)
@@ -65,5 +66,7 @@ def tester(prefix):
         print('@@@ Greatest difference was %f'%maxdiff)
 
 if __name__ == '__main__':
+    subprocess.check_call(['make'])
+
     for test in tests:
         tester(os.path.join(test_dir,test))   
