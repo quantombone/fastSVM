@@ -112,6 +112,7 @@ int main (int argc, char ** argv)
     in.push(file);
     std::istream incoming(&in);
     std::vector<SVM> svms;
+    int total_coeff = 0;
     while (true)
     {
         SVM svm;
@@ -124,6 +125,7 @@ int main (int argc, char ** argv)
         assert(svm.bins == 31);
         
         svm.w.resize(svm.width*svm.height*svm.bins);
+        total_coeff += svm.w.size();
         incoming.read((char*)&svm.w[0], svm.width*svm.height*svm.bins*sizeof(float));
         assert(incoming);
         incoming.read((char*)&svm.b, sizeof(float));
@@ -132,10 +134,32 @@ int main (int argc, char ** argv)
     }
     file.close();
     std::cout << timer.elapsed() << " seconds" << std::endl;
-
+    /**********/
+    
+    /***** Prepare output *****/
     boost::iostreams::filtering_ostream out;
     out.push(boost::iostreams::gzip_compressor());
     out.push(boost::iostreams::file_sink(outputFilename.c_str(), std::ios_base::binary));
+
+    /***** Copy filters to GPU *****/
+    std::cout << "Copy filters to GPU: " << std::flush;
+    timer.restart();
+    float * d_filter_big;
+    cudaSafeCall(cudaMalloc((void**)&d_filter_big, sizeof(float)*total_coeff));
+
+    float * h_filter_big;
+    cudaSafeCall(cudaMallocHost((void**)&h_filter_big, sizeof(float)*total_coeff));
+    int index = 0;
+    for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
+    {
+        int size = j->w.size();
+        memcpy(h_filter_big + index, &j->w[0], size*sizeof(float));
+        index += size;
+    }
+    cudaSafeCall(cudaMemcpy(d_filter_big, h_filter_big, sizeof(float)*total_coeff, cudaMemcpyHostToDevice));
+    cudaSafeCall(cudaFreeHost(h_filter_big));
+    std::cout << timer.elapsed() << " seconds" << std::endl;
+    /*********/
 
     /***** FOREACH scale *****/
     for (int i = 0; i < 200; ++i)
@@ -357,24 +381,23 @@ int main (int argc, char ** argv)
         cufftReal * d_filter_padded;
         cudaSafeCall(cudaMalloc((void**)&d_filter_padded, sizeof(cufftReal)*feat_bins*pad_x*pad_y));
 
-        float * d_filter;
-        cudaSafeCall(cudaMalloc((void**)&d_filter, sizeof(float)*pad_x*pad_y*feat_bins));
-
         cufftReal * d_result;
         cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y));
 
+        float * d_filter = d_filter_big;
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
         {
+            int size = j->w.size();
             int crop_x = feat_x - j->width + 1;
             int crop_y = feat_y - j->height + 1;
  
             // Image too small for filter
             if (crop_x <= 0 || crop_y <= 0)
             {
-                continue;
+                return 0;
             }
         //    std::cout << j - svms.begin() << std::endl;
-            cudaSafeCall(cudaMemcpy(d_filter, &j->w[0], sizeof(float)*j->w.size(), cudaMemcpyHostToDevice));
+            //cudaSafeCall(cudaMemcpy(d_filter, &j->w[0], sizeof(float)*j->w.size(), cudaMemcpyHostToDevice));
 
             PadFeatures<<<pad_grid, pad_block>>>(
                 d_filter,
@@ -458,9 +481,7 @@ int main (int argc, char ** argv)
                 pad_x,
                 pad_y,
                 d_result);
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
-    
+   
             #if 0
             std::vector<cufftReal> h_result (crop_x*crop_y);
             cudaSafeCall(cudaMemcpy(&h_result[0], d_result, h_result.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
@@ -470,7 +491,10 @@ int main (int argc, char ** argv)
             exit(0);
             #endif
        
-            #if 1 
+            #if 1
+            cudaSafeCall(cudaThreadSynchronize());
+            cudaSafeCall(cudaGetLastError());
+ 
             out.write((const char*)&scaler, sizeof(float));
             uint16_t crop_x_out = crop_x;
             uint16_t crop_y_out = crop_y;
@@ -481,13 +505,14 @@ int main (int argc, char ** argv)
             out.write((const char*)&h_result[0], h_result.size()*sizeof(cufftReal));
             #endif
 
+            d_filter += size;
+
             #if 1
             break;
             #endif
 
         }
         /***** Free memory for image features and freq transform *****/ 
-        cudaSafeCall(cudaFree(d_filter));
         cudaSafeCall(cudaFree(d_filter_padded));
         cudaSafeCall(cudaFree(d_filter_freq));
         cufftSafeCall(cufftDestroy(planForward));
@@ -498,6 +523,7 @@ int main (int argc, char ** argv)
         break;
         #endif
     }
+    cudaSafeCall(cudaFree(d_filter_big));
 
     return 0;
 }
