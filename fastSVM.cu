@@ -9,6 +9,8 @@
 #include <iostream>
 #include <fstream>
 
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/device/file.hpp>
 #include <boost/iostreams/filtering_streambuf.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/timer.hpp>
@@ -83,14 +85,15 @@ int main (int argc, char ** argv)
 {
     boost::timer timer;
 
-    if (argc < 3)
+    if (argc < 4)
     {
-        std::cout << "Usage: " << argv[0] << " [image] [svms].gz" << std::endl;
+        std::cout << "Usage: " << argv[0] << " [image] [svms].gz [result].gz" << std::endl;
         exit (0);
     }
 
     std::string imageFilename (argv[1]);
     std::string svmFilename (argv[2]);
+    std::string outputFilename (argv[3]);
 
     /***** Load image *****/
     std::cout << "Load image: " << std::flush;
@@ -130,6 +133,9 @@ int main (int argc, char ** argv)
     file.close();
     std::cout << timer.elapsed() << " seconds" << std::endl;
 
+    boost::iostreams::filtering_ostream out;
+    out.push(boost::iostreams::gzip_compressor());
+    out.push(boost::iostreams::file_sink(outputFilename.c_str(), std::ios_base::binary));
 
     /***** FOREACH scale *****/
     for (int i = 0; i < 200; ++i)
@@ -449,7 +455,7 @@ int main (int argc, char ** argv)
                 cudaSafeCall(cudaGetLastError());
             }
     
-            #if 1
+            #if 0
             std::vector<cufftReal> h_result (crop_x*crop_y);
             cudaSafeCall(cudaMemcpy(&h_result[0], d_result, h_result.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
             std::ofstream resultDump ("result_dump");
@@ -457,7 +463,19 @@ int main (int argc, char ** argv)
             resultDump.write((const char *)&h_result[0], h_result.size()*sizeof(cufftReal));
             exit(0);
             #endif
-
+        
+            out.write((const char*)&scaler, sizeof(float));
+            uint16_t crop_x_out = crop_x;
+            uint16_t crop_y_out = crop_y;
+            out.write((const char*)&crop_y_out, sizeof(uint16_t));
+            out.write((const char*)&crop_x_out, sizeof(uint16_t));
+            std::vector<cufftReal> h_result (crop_x*crop_y);
+            cudaSafeCall(cudaMemcpy(&h_result[0], d_result, h_result.size()*sizeof(cufftReal), cudaMemcpyDeviceToHost));
+            out.write((const char*)&h_result[0], h_result.size()*sizeof(cufftReal));
+std::cout << "@" << std::endl;
+            #if 1
+            break;
+            #endif
 
         }
         /***** Free memory for image features and freq transform *****/ 
@@ -467,8 +485,11 @@ int main (int argc, char ** argv)
         cufftSafeCall(cufftDestroy(planForward));
         cufftSafeCall(cufftDestroy(planInverse));
         cudaSafeCall(cudaFree(d_feat_freq));
-    }
 
+        #if 1
+        break;
+        #endif
+    }
 
     return 0;
 }
