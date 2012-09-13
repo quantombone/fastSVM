@@ -18,7 +18,7 @@ static __global__ void CropScaleAccum(const cufftReal*, int, int, int, int, cuff
 static __global__ void Zero(int, float *);
 static __global__ void Init(float, int, float *);
 
-static __global__ void FormatImage(const unsigned char *, float3 *, int, bool);
+static __global__ void FormatImage(const unsigned char *, float3 *, int, int, int, bool);
 static __global__ void ComputeHistograms(const float3 *, int, int, int, int, int, int, float *);
 static __global__ void ComputeEnergy(const float *, int, int, float *);
 static __global__ void ComputeFeatures(const float *, const float *, int, int, int, int, float *);
@@ -142,30 +142,37 @@ int main (int argc, char ** argv)
         std::cout << "Rescale image: " << std::flush;
         image.rescale(originalImage.getWidth()*scaler, originalImage.getHeight()*scaler, FILTER_BILINEAR);
         std::cout << timer.elapsed() << std::endl;
+        std::cout << image.getWidth() << " " << image.getHeight() << " " << image.getScanWidth() << " " << (image.isGrayscale() ? "Grayscale" : "Color" ) << std::endl;
 
         /***** Convert to floating point color *****/
         timer.restart();
         std::cout << "Convert image: " << std::flush;
         unsigned char * d_byte_image;
         float3 * d_color_float_image;
-        int imageSize = image.getWidth()*image.getHeight();
-        int srcImageSize = image.isGrayscale() ? imageSize : 3*imageSize;
+        int srcImageSize = image.getScanWidth()*image.getHeight();
         cudaSafeCall(cudaMalloc((void**)&d_byte_image, srcImageSize));
-        int dstImageSize = 3*imageSize;
-        cudaSafeCall(cudaMalloc((void**)&d_color_float_image, dstImageSize*sizeof(float)));
+        int dstImageSize = image.getWidth()*image.getHeight();
+        cudaSafeCall(cudaMalloc((void**)&d_color_float_image, dstImageSize*sizeof(float3)));
         cudaSafeCall(cudaMemcpy(d_byte_image, image.accessPixels(), srcImageSize, cudaMemcpyHostToDevice));
-        FormatImage<<<32, 256>>>(d_byte_image, d_color_float_image, imageSize, image.isGrayscale());
+
+        FormatImage<<<32, 256>>>(
+            d_byte_image, 
+            d_color_float_image,
+            image.getWidth(), 
+            image.getHeight(),
+            image.getScanWidth(),
+            image.isGrayscale());
         cudaSafeCall(cudaThreadSynchronize());
         cudaSafeCall(cudaGetLastError());
         cudaSafeCall(cudaFree(d_byte_image));
         std::cout << timer.elapsed() << std::endl;
 
         #if 0
-        std::vector<float> h_color_float_image (dstImageSize);
-        cudaSafeCall(cudaMemcpy(&h_color_float_image[0], d_color_float_image, h_color_float_image.size()*sizeof(float), cudaMemcpyDeviceToHost));
+        std::vector<float3> h_color_float_image (dstImageSize);
+        cudaSafeCall(cudaMemcpy(&h_color_float_image[0], d_color_float_image, h_color_float_image.size()*sizeof(float3), cudaMemcpyDeviceToHost));
         std::ofstream outImage ("color_float_dump");
         std::cout << h_color_float_image.size() << std::endl;
-        outImage.write((const char *)&h_color_float_image[0], h_color_float_image.size()*sizeof(float));
+        outImage.write((const char *)&h_color_float_image[0], h_color_float_image.size()*sizeof(float3));
         exit(0);
         #endif
         /**********/
@@ -403,6 +410,15 @@ int main (int argc, char ** argv)
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
 
+            #if 0
+            std::vector<cufftComplex> h_pointwise (pad_x*(pad_y/2+1)*feat_bins);
+            cudaSafeCall(cudaMemcpy(&h_pointwise[0], d_filter_freq, h_pointwise.size()*sizeof(cufftComplex), cudaMemcpyDeviceToHost));
+            std::ofstream pointwiseDump ("pointwise_dump");
+            std::cout << pad_y/2+1 << " " << pad_x << " " << feat_bins << std::endl;
+            pointwiseDump.write((const char *)&h_pointwise[0], h_pointwise.size()*sizeof(cufftComplex));
+            exit(0);
+            #endif
+
             for (int k = 0; k < feat_bins; ++k)
                 cufftSafeCall(cufftExecC2R(planInverse, d_filter_freq + pad_x*(pad_y/2+1)*k, d_filter_padded + pad_x*pad_y*k));
             cudaSafeCall(cudaThreadSynchronize());
@@ -483,7 +499,7 @@ static __global__ void CropScaleAccum(const cufftReal* a, int crop_x, int crop_y
         int row = i % pad_y;
         int col = i / pad_y;
 
-        if (row >= crop_y || col >= crop_x) return;
+        if (row >= crop_y || col >= crop_x) continue;
 
         int j = col*crop_y + row;
         
@@ -511,16 +527,27 @@ static __global__ void Init(float value, int size, float * buf)
     }
 }
 
-static __global__ void FormatImage(const unsigned char * byte_image, float3 * color_float_image, int size, bool grayscale)
+static __global__ void FormatImage(const unsigned char * byte_image, float3 * color_float_image, int width, int height, int line, bool grayscale)
 {
     const int numThreads = blockDim.x * gridDim.x;
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
 
+    int size = height*line;
     for (int i = threadID; i < size; i += numThreads)
     {
-        color_float_image[i].x = (grayscale ? byte_image[i] : byte_image[3*i])/255.f;
-        color_float_image[i].y = (grayscale ? byte_image[i] : byte_image[3*i+1])/255.f;
-        color_float_image[i].z = (grayscale ? byte_image[i] : byte_image[3*i+2])/255.f;
+        int x = i % line;
+        int y = i / line;
+
+        if (!grayscale && x%3) continue;
+
+        if (!grayscale) x /= 3;
+
+        if (x >= width) continue;;
+        int j = x*height + (height - 1 - y);
+
+        color_float_image[j].x = (grayscale ? byte_image[i] : byte_image[i])/255.f;
+        color_float_image[j].y = (grayscale ? byte_image[i] : byte_image[i+1])/255.f;
+        color_float_image[j].z = (grayscale ? byte_image[i] : byte_image[i+2])/255.f;
     }
 }
 
@@ -543,9 +570,9 @@ static __global__ void ComputeHistograms(const float3 * color_float_image, int w
         if (x == 0 || y == 0 || x >= visible_x-1 || y >= visible_y-1)
             continue;
 
-        const float3 * s = color_float_image + (height-1 - min(y,height-2))*width + min(x,width-2);
-        float3 dx = *(s+1) - *(s-1);
-        float3 dy = *(s-width) - *(s+width);
+        const float3 * s = color_float_image + min(x,width-2)*height + min(y,height-2);
+        float3 dy = *(s+1) - *(s-1);
+        float3 dx = *(s+height) - *(s-height);
         float3 v = dx*dx + dy*dy;
 
         // pick channel with strongest gradient
