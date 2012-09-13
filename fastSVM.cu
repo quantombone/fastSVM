@@ -380,8 +380,6 @@ int main (int argc, char ** argv)
                 pad_x,
                 pad_y,
                 d_filter_padded);
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
 
             #if 0
             std::vector<cufftReal> h_filter_pad (pad_x*pad_y*feat_bins);
@@ -403,12 +401,8 @@ int main (int argc, char ** argv)
                 -j->b,
                 crop_x*crop_y,
                 d_result);
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
           
             cufftSafeCall(cufftExecR2C(planForward, d_filter_padded, d_filter_freq));
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
 
             #if 0
             std::vector<cufftComplex> h_filter_freq (pad_x*(pad_y/2+1)*feat_bins);
@@ -427,8 +421,6 @@ int main (int argc, char ** argv)
                 d_filter_freq, 
                 d_feat_freq, 
                 pad_x*(pad_y/2+1)*feat_bins);
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
 
             #if 0
             std::vector<cufftComplex> h_pointwise (pad_x*(pad_y/2+1)*feat_bins);
@@ -440,8 +432,6 @@ int main (int argc, char ** argv)
             #endif
 
             cufftSafeCall(cufftExecC2R(planInverse, d_filter_freq, d_filter_padded));
-            cudaSafeCall(cudaThreadSynchronize());
-            cudaSafeCall(cudaGetLastError());
 
             #if 0
             std::vector<cufftReal> h_conv (pad_x*pad_y*feat_bins);
@@ -480,7 +470,7 @@ int main (int argc, char ** argv)
             exit(0);
             #endif
        
-            #if 0 
+            #if 1 
             out.write((const char*)&scaler, sizeof(float));
             uint16_t crop_x_out = crop_x;
             uint16_t crop_y_out = crop_y;
@@ -491,7 +481,7 @@ int main (int argc, char ** argv)
             out.write((const char*)&h_result[0], h_result.size()*sizeof(cufftReal));
             #endif
 
-            #if 1
+            #if 0
             break;
             #endif
 
