@@ -326,19 +326,15 @@ int main (int argc, char ** argv)
 
         /***** Apply FFT to input image *****/
         cufftHandle planForward, planInverse;
-        //int n[2] = {pad_x, pad_y};
+        int n[2] = {pad_x, pad_y};
         timer.restart();
         std::cout << "FFT on input image features: " << std::flush;
-        //cufftSafeCall(cufftPlanMany(&planImage, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_R2C, feat_bins));
-        cufftSafeCall(cufftPlan2d(&planForward, pad_x, pad_y, CUFFT_R2C));
-        cufftSafeCall(cufftPlan2d(&planInverse, pad_x, pad_y, CUFFT_C2R));
+        cufftSafeCall(cufftPlanMany(&planForward, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_R2C, feat_bins));
+        cufftSafeCall(cufftPlanMany(&planInverse, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_C2R, feat_bins));
         cufftComplex * d_feat_freq;
         // Note: for R2C CUFFT only stores non-redundant complex coefficients
         cudaSafeCall(cudaMalloc((void**)&d_feat_freq, sizeof(cufftComplex)*pad_x*(pad_y/2+1)*feat_bins));
-        for (int j = 0; j < feat_bins; ++j)
-        {
-            cufftSafeCall(cufftExecR2C(planForward, d_feat_pad + pad_x*pad_y*j, d_feat_freq + pad_x*(pad_y/2+1)*j));
-        }
+        cufftSafeCall(cufftExecR2C(planForward, d_feat_pad, d_feat_freq));
         cudaSafeCall(cudaThreadSynchronize());
         cudaSafeCall(cudaGetLastError());
         cudaSafeCall(cudaFree(d_feat_pad));
@@ -410,8 +406,7 @@ int main (int argc, char ** argv)
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
           
-            for (int k = 0; k < feat_bins; ++k) 
-                cufftSafeCall(cufftExecR2C(planForward, d_filter_padded + pad_x*pad_y*k, d_filter_freq + pad_x*(pad_y/2+1)*k));
+            cufftSafeCall(cufftExecR2C(planForward, d_filter_padded, d_filter_freq));
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
 
@@ -444,8 +439,7 @@ int main (int argc, char ** argv)
             exit(0);
             #endif
 
-            for (int k = 0; k < feat_bins; ++k)
-                cufftSafeCall(cufftExecC2R(planInverse, d_filter_freq + pad_x*(pad_y/2+1)*k, d_filter_padded + pad_x*pad_y*k));
+            cufftSafeCall(cufftExecC2R(planInverse, d_filter_freq, d_filter_padded));
             cudaSafeCall(cudaThreadSynchronize());
             cudaSafeCall(cudaGetLastError());
 
