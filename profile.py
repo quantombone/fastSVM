@@ -15,6 +15,8 @@ with open('cuda_profile.config', 'w') as f:
 #    f.write('gld_incoherent\n')
 #    f.write('gst_incoherent\n')
 
+subprocess.check_call(['make'])
+
 p = subprocess.Popen(
     ['./fastSVM', 'tests/color.png', 'packaged.gz', 'output.gz'], 
     env=env
