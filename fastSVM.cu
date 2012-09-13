@@ -365,8 +365,11 @@ int main (int argc, char ** argv)
 
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
         {
+            int crop_x = feat_x - j->width + 1;
+            int crop_y = feat_y - j->height + 1;
+ 
             // Image too small for filter
-            if (j->width > feat_x || j->height > feat_y)
+            if (crop_x <= 0 || crop_y <= 0)
             {
                 continue;
             }
@@ -389,9 +392,6 @@ int main (int argc, char ** argv)
             filterPadDump.write((const char *)&h_filter_pad[0], h_filter_pad.size()*sizeof(cufftReal));
             exit(0);
             #endif
-
-            int crop_x = feat_x - j->width + 1;
-            int crop_y = feat_y - j->height + 1;
 
             int init_block;
             init_block = 512;
@@ -481,7 +481,7 @@ int main (int argc, char ** argv)
             out.write((const char*)&h_result[0], h_result.size()*sizeof(cufftReal));
             #endif
 
-            #if 0
+            #if 1
             break;
             #endif
 
