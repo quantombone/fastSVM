@@ -376,7 +376,7 @@ int main (int argc, char ** argv)
             #endif
  
             Init<<<32, 256>>>(
-                j->b,
+                -j->b,
                 pad_x*pad_y*feat_bins,
                 d_result);
             cudaSafeCall(cudaThreadSynchronize());
