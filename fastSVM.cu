@@ -19,6 +19,7 @@ static __global__ void PointwiseMulConj(cufftComplex*, const cufftComplex*, int)
 static __global__ void CropScaleAccum(const cufftReal*, int, int, int, int, cufftReal*);
 static __global__ void Zero(int, float *);
 static __global__ void Init(float, int, float *);
+static __global__ void Threshold(float, int, float *);
 
 static __global__ void FormatImage(const unsigned char *, float3 *, int, int, int, bool);
 static __global__ void ComputeHistograms(const float3 *, int, int, int, int, int, int, float *);
@@ -137,7 +138,8 @@ int main (int argc, char ** argv)
         svms.push_back (svm);
 
         #if 1
-        break;
+        if (svms.size() == 20)
+            break;
         #endif
     }
     file.close();
@@ -502,6 +504,15 @@ int main (int argc, char ** argv)
             resultDump.write((const char *)&h_result[0], h_result.size()*sizeof(cufftReal));
             exit(0);
             #endif
+
+            int threshold_block;
+            threshold_block = 512;
+            int threshold_grid;
+            threshold_grid = ceil((float)crop_x*crop_y/threshold_block);
+            Threshold<<<threshold_grid, threshold_block>>>(
+                -1,
+                crop_x*crop_y,
+                d_result);
       
             uint16_t crop_x_out = crop_x;
             uint16_t crop_y_out = crop_y;
@@ -534,7 +545,7 @@ int main (int argc, char ** argv)
         cudaSafeCall(cudaDeviceSynchronize());
         out.write((const char*)h_result, result_index);
         cudaSafeCall(cudaFreeHost(h_result));
-        #if 1
+        #if 0
         break;
         #endif
     }
@@ -587,6 +598,14 @@ static __global__ void Init(float value, int size, float * buf)
     const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
     if(threadID >= size) return;
     buf[threadID] = value;
+}
+
+static __global__ void Threshold(float value, int size, float * buf)
+{
+    const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
+    if(threadID >= size) return;
+    float prev = buf[threadID];
+    buf[threadID] = prev < value ? value : prev;
 }
 
 static __global__ void FormatImage(const unsigned char * byte_image, float3 * color_float_image, int width, int height, int line, bool grayscale)
