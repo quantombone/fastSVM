@@ -137,7 +137,7 @@ int main (int argc, char ** argv)
         assert(incoming);
         svms.push_back (svm);
 
-        #if 1
+        #if 0
         if (svms.size() == 20)
             break;
         #endif
