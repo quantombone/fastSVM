@@ -356,7 +356,9 @@ int main (int argc, char ** argv)
         timer.restart();
         std::cout << "FFT on input image features: " << std::flush;
         cufftSafeCall(cufftPlanMany(&planForward, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_R2C, feat_bins));
+        cufftSafeCall(cufftSetCompatibilityMode(planForward, CUFFT_COMPATIBILITY_NATIVE));
         cufftSafeCall(cufftPlanMany(&planInverse, 2, n, NULL, 1, 0, NULL, 1, 0, CUFFT_C2R, feat_bins));
+        cufftSafeCall(cufftSetCompatibilityMode(planInverse, CUFFT_COMPATIBILITY_NATIVE));
         cufftComplex * d_feat_freq;
         // Note: for R2C CUFFT only stores non-redundant complex coefficients
         cudaSafeCall(cudaMalloc((void**)&d_feat_freq, sizeof(cufftComplex)*pad_x*(pad_y/2+1)*feat_bins));
@@ -386,7 +388,9 @@ int main (int argc, char ** argv)
         cufftReal * d_result;
         cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y));
 
-        std::vector<cufftReal> h_result (feat_x*feat_y);
+        uint8_t * h_result;
+        cudaSafeCall(cudaMallocHost(&h_result, (feat_x*feat_y*sizeof(float) + sizeof(float) + 2*sizeof(uint16_t))*9360));
+        int result_index = 0;
 
         float * d_filter = d_filter_big;
         for (std::vector<SVM>::const_iterator j = svms.begin(); j != svms.end(); ++j)
@@ -494,13 +498,20 @@ int main (int argc, char ** argv)
             resultDump.write((const char *)&h_result[0], h_result.size()*sizeof(cufftReal));
             exit(0);
             #endif
-       
-            cudaSafeCall(cudaMemcpy(&h_result[0], d_result, crop_x*crop_y*sizeof(cufftReal), cudaMemcpyDeviceToHost));
-
-            #if 1
-            out.write((const char*)&scaler, sizeof(float));
+      
             uint16_t crop_x_out = crop_x;
             uint16_t crop_y_out = crop_y;
+            memcpy(h_result+result_index, &scaler, sizeof(float));
+            result_index += sizeof(float);
+            memcpy(h_result+result_index, &crop_y_out, sizeof(uint16_t));
+            result_index += sizeof(uint16_t);
+            memcpy(h_result+result_index, &crop_x_out, sizeof(uint16_t));
+            result_index += sizeof(uint16_t);
+            cudaSafeCall(cudaMemcpyAsync(h_result+result_index, d_result, crop_x*crop_y*sizeof(cufftReal), cudaMemcpyDeviceToHost));
+            result_index += crop_x*crop_y*sizeof(cufftReal);
+
+            #if 0
+            out.write((const char*)&scaler, sizeof(float));
             out.write((const char*)&crop_y_out, sizeof(uint16_t));
             out.write((const char*)&crop_x_out, sizeof(uint16_t));
             out.write((const char*)&h_result[0], h_result.size()*sizeof(cufftReal));
@@ -508,7 +519,7 @@ int main (int argc, char ** argv)
 
             d_filter += size;
 
-            #if 1
+            #if 0
             break;
             #endif
 
@@ -520,7 +531,9 @@ int main (int argc, char ** argv)
         cufftSafeCall(cufftDestroy(planInverse));
         cudaSafeCall(cudaFree(d_feat_freq));
 
-        #if 1
+        //out.write((const char*)h_result, result_index);
+        cudaSafeCall(cudaFreeHost(h_result));
+        #if 0
         break;
         #endif
     }
