@@ -135,6 +135,10 @@ int main (int argc, char ** argv)
         incoming.read((char*)&svm.b, sizeof(float));
         assert(incoming);
         svms.push_back (svm);
+
+        #if 1
+        break;
+        #endif
     }
     file.close();
     std::cout << timer.elapsed() << " seconds" << std::endl;
@@ -389,7 +393,7 @@ int main (int argc, char ** argv)
         cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y));
 
         uint8_t * h_result;
-        cudaSafeCall(cudaMallocHost(&h_result, (feat_x*feat_y*sizeof(float) + sizeof(float) + 2*sizeof(uint16_t))*9360));
+        cudaSafeCall(cudaMallocHost(&h_result, (feat_x*feat_y*sizeof(float) + sizeof(float) + 2*sizeof(uint16_t))*svms.size()));
         int result_index = 0;
 
         float * d_filter = d_filter_big;
@@ -519,10 +523,6 @@ int main (int argc, char ** argv)
 
             d_filter += size;
 
-            #if 0
-            break;
-            #endif
-
         }
         /***** Free memory for image features and freq transform *****/ 
         cudaSafeCall(cudaFree(d_filter_padded));
@@ -531,9 +531,10 @@ int main (int argc, char ** argv)
         cufftSafeCall(cufftDestroy(planInverse));
         cudaSafeCall(cudaFree(d_feat_freq));
 
-        //out.write((const char*)h_result, result_index);
+        cudaSafeCall(cudaDeviceSynchronize());
+        out.write((const char*)h_result, result_index);
         cudaSafeCall(cudaFreeHost(h_result));
-        #if 0
+        #if 1
         break;
         #endif
     }
