@@ -1,5 +1,5 @@
 #include <cufft.h>
-#include <cutil_math.h>
+#include "cutil_math.h"
 
 #include <FreeImagePlus.h>
 
