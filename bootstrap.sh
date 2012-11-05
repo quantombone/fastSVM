@@ -7,7 +7,8 @@ svm_path=packaged-pruned.gz
 mkdir -p /home/hadoop/contents
 cd /home/hadoop/contents
 
-sudo aptitude install -y python-pip python-imaging libfreeimage-dev libboost-iostreams-dev
+sudo apt-get update
+sudo apt-get install -y pkg-config python-pip python-imaging libfreeimage-dev libboost-iostreams-dev
 sudo pip install boto
 wget -S -T 10 -t 5 http://s3.amazonaws.com/$bucket/cutil_math.h
 wget -S -T 10 -t 5 http://s3.amazonaws.com/$bucket/fastSVM.cu
