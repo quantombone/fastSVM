@@ -2,7 +2,7 @@
 set -e
 bucket=fastsvm
 fastSVM_path=fastSVM
-svm_path=packaged-pruned.gz
+svm_path=packaged-nov-4-2012.gz
 
 mkdir -p /home/hadoop/contents
 cd /home/hadoop/contents

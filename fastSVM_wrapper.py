@@ -6,10 +6,9 @@ import sys
 import subprocess
 import boto
 from boto.s3.key import Key
-from PIL import Image
 
 def main(argv):
-    package = '/home/hadoop/contents/packaged-pruned.gz'
+    package = '/home/hadoop/contents/packaged-nov-4-2012.gz'
 
     parser = ConfigParser()
     parser.read('/home/hadoop/contents/.aws')
@@ -46,15 +45,6 @@ def main(argv):
         output = inputFile.replace('.jpg', '.gz')
         sys.stderr.write('Input: %s\n'%inputFile)
         sys.stderr.write('Output: %s\n'%output)
-        image = Image.open(inputFile)
-        width, height = image.size
-        maxSize = 960
-        if width > maxSize or height > maxSize:
-            if width > height:
-                image = image.resize((960, int(960.0/width*height)))
-            else:
-                image = image.resize((int(960.0/height*width), 960))
-            image.save(inputFile)
         proc = subprocess.Popen(['/home/hadoop/contents/fastSVM', inputFile, package, output], env=env, stdout=sys.stderr)
         retval = proc.wait()
         if retval != 0:
