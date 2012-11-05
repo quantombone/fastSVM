@@ -9,7 +9,7 @@ from boto.s3.key import Key
 from PIL import Image
 
 def main(argv):
-    package = '/home/hadoop/contents/packaged.gz'
+    package = '/home/hadoop/contents/packaged-pruned.gz'
 
     parser = ConfigParser()
     parser.read('/home/hadoop/contents/.aws')
@@ -20,7 +20,7 @@ def main(argv):
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_access_key_secret
     )
-    bucket_in = connection.get_bucket('labeler')
+    bucket_in = connection.get_bucket('fastsvm')
     bucket_out = connection.get_bucket('fastsvm')
     
     env = os.environ
@@ -28,7 +28,7 @@ def main(argv):
 
     for line in sys.stdin:
         line = line.strip()
-        final = line.replace('.jpg', '.gz').replace('images', 'output_oct9')
+        final = line.replace('.jpg', '.gz')
         if bucket_out.get_key(final) is not None:
             print(line)
             continue
