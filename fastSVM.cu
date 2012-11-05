@@ -75,6 +75,7 @@ void _cufftSafeCall (cufftResult error, int line)
 
 struct SVM
 {
+    uint16_t exemplar_id;
     uint16_t width;
     uint16_t height;
     uint16_t bins;
@@ -119,8 +120,10 @@ int main (int argc, char ** argv)
     while (true)
     {
         SVM svm;
+        incoming.read((char*)&svm.exemplar_id, sizeof(uint16_t));
+        if (!incoming) break;
         incoming.read((char*)&svm.width, sizeof(uint16_t));
-        if(!incoming) break;
+        assert(incoming);
         incoming.read((char*)&svm.height, sizeof(uint16_t));
         assert(incoming);
         incoming.read((char*)&svm.bins, sizeof(uint16_t));
@@ -140,6 +143,9 @@ int main (int argc, char ** argv)
         #if 0
         if (svms.size() == 20)
             break;
+        #endif
+        #if 0
+        std::cout << svm.exemplar_id << " " << svm.width << " " << svm.height << " " << svm.bins << std::endl;
         #endif
     }
     file.close();
@@ -395,7 +401,7 @@ int main (int argc, char ** argv)
         cudaSafeCall(cudaMalloc((void**)&d_result, sizeof(cufftReal)*pad_x*pad_y));
 
         uint8_t * h_result;
-        cudaSafeCall(cudaMallocHost(&h_result, (feat_x*feat_y*sizeof(float) + sizeof(float) + 2*sizeof(uint16_t))*svms.size()));
+        cudaSafeCall(cudaMallocHost(&h_result, (feat_x*feat_y*sizeof(float) + sizeof(uint16_t) + sizeof(float) + 2*sizeof(uint16_t))*svms.size()));
         int result_index = 0;
 
         float * d_filter = d_filter_big;
@@ -516,6 +522,8 @@ int main (int argc, char ** argv)
       
             uint16_t crop_x_out = crop_x;
             uint16_t crop_y_out = crop_y;
+            memcpy(h_result+result_index, &j->exemplar_id, sizeof(uint16_t));
+            result_index += sizeof(uint16_t);
             memcpy(h_result+result_index, &scaler, sizeof(float));
             result_index += sizeof(float);
             memcpy(h_result+result_index, &crop_y_out, sizeof(uint16_t));
