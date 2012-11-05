@@ -27,7 +27,7 @@ def main(argv):
 
     for line in sys.stdin:
         line = line.strip()
-        final = line.replace('.jpg', '.gz')
+        final = os.path.join('nov-4-2012-output', line.replace('.jpg', '.gz'))
         if bucket_out.get_key(final) is not None:
             print(line)
             continue
