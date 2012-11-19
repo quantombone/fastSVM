@@ -27,7 +27,7 @@ def main(argv):
 
     for line in sys.stdin:
         line = line.strip()
-        final = os.path.join('nov-4-2012-output', line.replace('.jpg', '.gz'))
+        final = os.path.join('nov-4-2012-output', os.path.splitext(line)[0]+'.gz')
         if bucket_out.get_key(final) is not None:
             print(line)
             continue
@@ -42,7 +42,7 @@ def main(argv):
         k.key = line
         inputFile = os.path.join('/home/hadoop/contents', line)
         k.get_contents_to_filename(inputFile)
-        output = inputFile.replace('.jpg', '.gz')
+        output = os.path.splitext(inputFile)[0]+'.gz'
         sys.stderr.write('Input: %s\n'%inputFile)
         sys.stderr.write('Output: %s\n'%output)
         proc = subprocess.Popen(['/home/hadoop/contents/fastSVM', inputFile, package, output], env=env, stdout=sys.stderr)
@@ -53,8 +53,14 @@ def main(argv):
         k.key = final 
         k.set_contents_from_filename(output)
 
-        os.remove(inputFile)
-        os.remove(output)
+        try:
+            os.remove(inputFile)
+        except:
+            pass
+        try:
+            os.remove(output)
+        except:
+            pass
         print(line)
         sys.stderr.write('Done')
 
